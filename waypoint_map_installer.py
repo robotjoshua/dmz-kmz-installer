@@ -124,7 +124,7 @@ def list_missions(device_id):
 
 
 def replace_mission(device_id, mission_folder, src_kmz_path,
-                    target_drone_code=None, progress_callback=None):
+                    target_drone_code=None, mission_name=None, progress_callback=None):
     """Full mission replacement — mirrors Avenian app's ReplaceMissionSameId:
     1. Normalize/patch KMZ
     2. Delete old files, upload new KMZ
@@ -140,7 +140,8 @@ def replace_mission(device_id, mission_folder, src_kmz_path,
 
     # ── Normalize KMZ ──
     _log("Normalizing KMZ (flatten + drone code patch)...")
-    normalized = normalize_kmz(src_kmz_path, target_drone_code=target_drone_code)
+    normalized = normalize_kmz(src_kmz_path, target_drone_code=target_drone_code,
+                                mission_name=mission_name)
 
     def _work(dev):
         wp = _wp_base(dev)
@@ -320,8 +321,8 @@ def verify_mission_on_device(device_id, mission_folder):
 
 # ── KMZ helpers ─────────────────────────────────────────────────────────────
 
-def normalize_kmz(src_kmz_path, target_drone_code=None):
-    """Repackage a KMZ: flatten wpmz/ subfolder, patch droneEnumValue."""
+def normalize_kmz(src_kmz_path, target_drone_code=None, mission_name=None):
+    """Repackage a KMZ: flatten wpmz/ subfolder, patch droneEnumValue, inject <name>."""
     temp_dir = os.path.join(tempfile.gettempdir(), "dji_kmz_normalize")
     os.makedirs(temp_dir, exist_ok=True)
     out_path = os.path.join(temp_dir, "normalized.kmz")
@@ -342,7 +343,7 @@ def normalize_kmz(src_kmz_path, target_drone_code=None):
                         needs_drone_patch = True
                     break
 
-        if not needs_flatten and not needs_drone_patch:
+        if not needs_flatten and not needs_drone_patch and not mission_name:
             return src_kmz_path
 
         with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as zf_out:
@@ -351,14 +352,20 @@ def normalize_kmz(src_kmz_path, target_drone_code=None):
                     continue
                 flat_name = n.split("/")[-1] if needs_flatten and "/" in n else n
                 data = zf_in.read(n)
-                if needs_drone_patch and (
-                    flat_name.lower().endswith(".kml") or flat_name.lower().endswith(".wpml")
-                ):
+                if flat_name.lower().endswith(".kml") or flat_name.lower().endswith(".wpml"):
                     text = data.decode("utf-8", errors="replace")
-                    text = re.sub(
-                        r"(<wpml:droneEnumValue>)\d+(</wpml:droneEnumValue>)",
-                        rf"\g<1>{target_drone_code}\g<2>", text
-                    )
+                    if needs_drone_patch:
+                        text = re.sub(
+                            r"(<wpml:droneEnumValue>)\d+(</wpml:droneEnumValue>)",
+                            rf"\g<1>{target_drone_code}\g<2>", text
+                        )
+                    if mission_name:
+                        # Update existing <name> or insert one after <Document>
+                        safe_name = mission_name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                        if re.search(r"<name>", text):
+                            text = re.sub(r"<name>[^<]*</name>", f"<name>{safe_name}</name>", text, count=1)
+                        else:
+                            text = text.replace("<Document>", f"<Document>\n    <name>{safe_name}</name>", 1)
                     data = text.encode("utf-8")
                 zf_out.writestr(flat_name, data)
     return out_path
@@ -870,9 +877,11 @@ class WaypointMapInstaller(tk.Tk):
 
         on_progress("Starting install...")
 
+        kmz_name = os.path.splitext(os.path.basename(self.kmz_file))[0]
         ok, detail = replace_mission(
             self._dest_info["device_id"], mission_folder, self.kmz_file,
             target_drone_code=target_code,
+            mission_name=kmz_name,
             progress_callback=on_progress,
         )
 
