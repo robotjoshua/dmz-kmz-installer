@@ -1,0 +1,26 @@
+# Build artifacts
+build/
+dist/
+*.spec
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Local dev data (may contain real device IDs / images)
+device_dump/
+preview_dump/
+
+# Large binaries — download separately (see README)
+platform-tools/
+platform-tools.zip
+
+# Editor / tool local config
+.claude/
+.vscode/
+*.swp
